@@ -1,0 +1,486 @@
+---
+title: "Analysis of Home Mortgage Disclosure Act"
+
+output:
+  word_document: default
+  pdf_document: default
+  html_notebook: default
+---
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+options(warn = -1)
+library(plyr)
+library(tidyverse)
+library(highcharter)
+library(gridExtra)
+library(cowplot)
+library(data.table)
+library(latexpdf)
+library(tinytex)
+
+####
+path.dir = getwd()
+data.dir = paste0(path.dir,"/Data")
+
+
+###
+df = fread(paste0(data.dir,"/train_values.csv")) %>% as.data.frame()
+label = fread(paste0(data.dir,"/train_labels.csv")) %>% as.data.frame()
+
+
+train.id = df$row_id
+label = label$accepted
+
+
+###
+df =df %>% within(rm("row_id"))
+
+```
+
+
+*Executive Summary*
+
+This document presents an analysis of data concerning Home Mortgage Disclosure Act and its applicants. the analysis is based on 500,000 observations and the result of thier applicant either accepted or rejected.
+After exploring the data by calculation summary and descriptive statistics, and by creating visualisation of the data, several potential relationships between HMDA characteristics and application were identified. After exploring the data, a predictive model to classify HMDA applicants into two categories was created.
+
+After performing the analysis, the following conclusions were made:
+
+while many factors can help indicate whether the application will be accepted, significant features found in this analysis were:
+
+-**lender acceptance rate** - acceptance rate per lender. The acceptance rate of some lenders are very low compare to ohters.
+
+-**Applicant Income** - the income of the applicants. Applicants with income greather than 1000 has a 53.6% acceptance rate.
+
+-**Loan Amount** - amount the applicant is loaning. Applicants applying for greater than 2000 has a 63% accpetance rate.
+
+-**Loan Purpose** - purpose of the loan. application with loan purpose home purchases tend to have high acceptance rate(59%) than home improvement(45%) and refinancing(33%).
+
+-**Lender Unigue Count** - unique counts of lender.
+
+-**Mean Applicant Income Per Lender** - mean applicant income per lender.
+
+# EXPLORATORY DATA ANALYSIS
+
+The exploration of the data began with some summary and descriptive statistics. the Home Mortgage Disclosure Act data set has 500000 rows and 21 features with the target feature accepted for the training data and 500000 rows and 21 features for the testing data set.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df$label = label
+
+a = df %>% mutate(
+  loan_type = as.factor(loan_type),
+  loan_purpose = as.factor(loan_purpose),
+  property_type = as.factor(property_type),
+  occupancy = as.factor(occupancy),
+  preapproval = as.factor(preapproval),
+  msa_md = as.factor(msa_md),
+  state_code = as.factor(state_code),
+  county_code = as.factor(county_code),
+  applicant_ethnicity = as.factor(applicant_ethnicity),
+  applicant_race = as.factor(applicant_race),
+  applicant_sex = as.factor(applicant_sex),
+  co_applicant=as.factor(co_applicant),
+  accepted = as.factor(label),
+  label = NULL
+  )
+
+str(a)
+
+paste("The training data has",dim(a)[1], "rows and", dim(a)[2], "columns")
+```
+
+
+**Summarise the missing values in the data**
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df$label = label
+a = df %>%  filter(!is.na(label))
+na.cols = which(colSums(is.na(a))>0)
+na.cols = sort(colSums(sapply(a[na.cols], is.na)),decreasing = TRUE)
+paste("there are", length(na.cols), "columns with missing values. below are the summarises for each column.")
+na.cols[-1]
+```
+
+**Fixing Missing Values**
+
+For each feature with missing values, the NA's were replaced with the median of their respective distribution.
+
+**Target Variable**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df %>% 
+  mutate(label = ifelse(label==1,"Yes",label),
+         label = ifelse(label == 0,"No",label)) %>% 
+  ggplot(aes(as.factor(label), fill = as.factor(label)))+
+  geom_bar()+
+  scale_y_continuous(limits = c(0,300000))+
+  geom_text(aes(label= ..count..),stat = "count",vjust = -0.5)+
+  labs(title = paste("Barplot of Accepted APplication"),
+       fill ="Accpeted")+
+  xlab("Accepted")+
+  ylab("Counts")
+```
+
+
+
+**NUMERICAL FEATURES**
+
+**Numeric Relationships**
+
+The following plot was generated initially to analyse and compare numeric features. The key numeric features in the data are visualised below:
+
+```{r plot1, echo=FALSE, message=FALSE, warning=FALSE}
+h1 = df %>% mutate(
+  loan = log(loan_amount)
+) %>% 
+  ggplot(aes(loan))+
+  geom_histogram(aes(fill = as.factor(label)),color="black")+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,100000*1.1))+
+  labs(title = paste("Histogram of Applicant Loan Amount"),
+       fill = "Accpeted")+
+  xlab("Accepted")+
+  ylab("Counts")
+
+h2 = df %>% mutate(
+ loan = log(applicant_income)
+) %>% 
+  ggplot(aes(loan))+
+  geom_histogram(aes(fill = as.factor(label)),color="black")+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(log(df$applicant_income))*1.1))+
+  labs(title = paste("Histogram of Applicant Income"),
+       fill = "Accpeted")+
+  xlab("Accepted")+
+  ylab("Counts")
+h3 = df %>% 
+  ggplot(aes(population))+
+  geom_histogram(aes(fill = as.factor(label)),color="black")+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(df$population)*1.1))+
+  labs(title = paste("Histogram of Population"),
+       fill = "Accpeted")+
+  xlab("Accepted")+
+  ylab("Counts")
+h4 = df %>% 
+  ggplot(aes(ffiecmedian_family_income))+
+  geom_histogram(aes(fill = as.factor(label)),color="black")+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(df$ffiecmedian_family_income)*1.1))+
+  labs(title = paste("Histogram of FFIEC Median Family Income"),
+       fill = "Accpeted")+
+  xlab("Accepted")+
+  ylab("Counts") 
+
+plot_grid(h1,h2, ncol = 1,align = "h")
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+plot_grid(h3,h4, ncol = 1,align = "h")
+```
+
+
+-**Loan Amount** initially has a left skewd distribution, taking log transformation of the features shows a normal distribution with few outliers and plot acertain that both accpeted and rejected applications has the same distribution.
+
+-**Population** has a left skewd distribution.
+
+-**Applicant Income** initially has a left skwed distribution, taking log transformation of the feature show a normal distribution with few outliers.
+
+
+
+```{r plot2, echo=FALSE, message=FALSE, warning=FALSE}
+h5 = df %>%  
+  ggplot(aes(minority_population_pct))+
+  geom_histogram(aes(fill = as.factor(label)),color="black")+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(df$minority_population_pct)*1.1))+
+  labs(title = paste("Histogram of Minority Population Pct"),
+       fill = "Accpeted")+
+  xlab("Accepted")+
+  ylab("Counts")
+
+h6 = df %>% 
+  ggplot(aes(tract_to_msa_md_income_pct))+
+  geom_histogram(aes(fill = as.factor(label)),color="black")+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(df$tract_to_msa_md_income_pct)*1.1))+
+  labs(title = paste("Histogram of Msa_md Income Pct"),
+       fill = "Accpeted")+
+  xlab("Accepted")+
+  ylab("Counts")
+h7 = df %>% 
+  ggplot(aes(`number_of_owner-occupied_units`))+
+  geom_histogram(aes(fill = as.factor(label)),color="black")+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(df$`number_of_owner-occupied_units`)*1.1))+
+  labs(title = paste("Histogram of Number of Owner Occupied Units"),
+       fill = "Accpeted")+
+  xlab("Accepted")+
+  ylab("Counts")
+h8 = df %>% 
+  ggplot(aes(number_of_1_to_4_family_units))+
+  geom_histogram(aes(fill = as.factor(label)),color="black")+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(df$number_of_1_to_4_family_units)*1.1))+
+  labs(title = paste("Histogram of  Number of 1-4 family units"),
+       fill = "Accpeted")+
+  xlab("Accepted")+
+  ylab("Counts")
+
+plot_grid(h5,h6,ncol = 1, align = "h")
+plot_grid(h7,h8,ncol = 1, align = "h")
+```
+
+
+- **No of owner Occupied Units** has a left skewed distribution.
+
+- **Msa_md Income Percentage** plot has a right skewed distribution and ranges from about 4% to 100% with majority of the applicants having a 100% msa_md income percentage.
+
+- **Number of 1-4 family Units** plot shows a left skewed distribution.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(corrplot)
+
+var = c("loan_amount","applicant_income","population","minority_population_pct","ffiecmedian_family_income","tract_to_msa_md_income_pct","number_of_owner-occupied_units","number_of_1_to_4_family_units")
+
+a = df %>% select(var)
+a[is.na(a)] = -999
+
+corr = cor(a)
+
+corrplot(as.matrix(corr),type = "upper",method = "color",addCoef.col = "black",tl.cex = .6,cl.cex =.7,number.cex = .7)
+```
+
+
+- minority population percentage and tract to msa_md income percentage have a correlation of 0.99.
+- population has a high correlation with both number of owner occupied units and nmuber of 1-4 family units which is a result of all three being counts of personnels.
+-loan amount and applicant income have extremely low correlation with other numeric features.
+- number of owner occupied units has a high correlation with number of 1-4 family units.
+
+**CATEGORICAL FEATURES**
+
+The following are the categorical features as in the data;
+
+- **Loan type - ** One of Conventional, Federal adminstration, veteran adminstration,farm service agency
+- **Property type**
+- **Loan Purpose**
+- **Occupany**
+- **Preapproval**
+- **Msa_md** 
+- **State_code**
+- **county_code**
+- **Applicant ethnicity**
+- **Applicant race**
+- **Applicant sex**
+- **Lender**
+- **Co Applicant**
+
+categorical features were explored and visualised with charts, the following conclusion were made;
+
+- Lender ID 6240 is the most common lender followed by lender 5710 and 3354 respecrtively
+- State 37,6,2 are the most common states tallying about 26.64% of the population, there are 19132 missing values in the state value assinged value -1
+- About 15.39% of the values in the msa_md column are missing.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+h1 = df %>%select(msa_md) %>% group_by(msa_md) %>%mutate(count=n()) %>%
+  filter(count > 10000) %>% 
+  ggplot(aes(as.factor(msa_md)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$msa_md))*1.3))+
+  labs(title = paste("Plot of Msa_md"))+
+  xlab("Msa_md")+
+  ylab("Counts") 
+
+h2 = df %>% select(county_code) %>% group_by(county_code) %>%mutate(count=n()) %>%
+  filter(count > 10000) %>% 
+  ggplot(aes(as.factor(county_code)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$county_code))*1.1))+
+  labs(title = paste("Plot of Counties"))+
+  xlab("Counties")+
+  ylab("Counts") 
+
+
+h3 = df %>%select(state_code) %>% group_by(state_code) %>%mutate(count=n()) %>%
+  filter(count > 15000) %>% 
+  ggplot(aes(as.factor(state_code)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$state_code))*1.1))+
+  labs(title = paste("Plot of States"))+
+  xlab("States")+
+  ylab("Counts") 
+
+
+h4 = df %>%select(lender) %>% group_by(lender) %>%mutate(count=n()) %>%
+  filter(count > 10000) %>% 
+  ggplot(aes(as.factor(lender)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$lender))*1.1))+
+  labs(title = paste("Plot of Lender"))+
+  xlab("Lenders")+
+  ylab("Counts") 
+
+
+plot_grid(h1,h2,ncol = 1,align = "h")
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+plot_grid(h3,h4,ncol = 1,align = "h")
+```
+
+
+- Conventional loan type is the most common loan type, followed by federal housing adminstration. Veteran adminstration and Farm service agency are much less common.
+- The majority of applicants are Male.
+- Male applicants are more common than female applicants.
+- Hispanic/Latino is the most common applicant ethnicity.
+- The majority of applicant are white, with very small frequencies for each of the other values.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+h5 = df %>%select(loan_type) %>% group_by(loan_type) %>%mutate(count=n()) %>%
+  
+  ggplot(aes(as.factor(loan_type)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$loan_type))*1.1))+
+  labs(title = paste("Plot of Loan Type"))+
+  xlab("Loan Type")+
+  ylab("Counts") 
+
+
+h6 = df %>% select(applicant_ethnicity) %>% group_by(applicant_ethnicity) %>%mutate(count=n()) %>%
+  ggplot(aes(as.factor(applicant_ethnicity)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$applicant_ethnicity))*1.1))+
+  labs(title = paste("Plot of Applicant Ethnicity"))+
+  xlab("Ethnicity")+
+  ylab("Counts") 
+
+
+h7 = df %>%select(applicant_race) %>% group_by(applicant_race) %>%
+  mutate(count=n()) %>%
+  ggplot(aes(as.factor(applicant_race)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$applicant_race))*1.1))+
+    labs(title = paste("Plot of Applicant Race"))+
+  xlab("Applicant Race")+
+  ylab("Counts") 
+
+
+h8 = df %>%select(applicant_sex) %>% group_by(applicant_sex) %>%mutate(count=n()) %>%
+  ggplot(aes(as.factor(applicant_sex)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$applicant_sex))*1.1))+
+    labs(title = paste("Plot of Applicant Sex"))+
+  xlab("Applicant Sex")+
+  ylab("Counts") 
+
+
+plot_grid(h5,h6,ncol = 1,align = "h")
+
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+plot_grid(h7,h8,ncol = 1,align = "h")
+```
+
+
+- MultiFamily is the most common property type.
+- One - Four family are more common than manufactured housing property.
+- Re-Financing is the more common than home improvemnet with home purchasing being relatively uncommon.
+- Pre-Approval for loans are not applicable to most of the applicants.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+h5 = df %>%select(property_type) %>% group_by(property_type) %>%mutate(count=n()) %>%
+  
+  ggplot(aes(as.factor(property_type)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$property_type))*1.1))+
+   labs(title = paste("Plot of Property Type"))+
+  xlab("Property Type")+
+  ylab("Counts") 
+
+h6 = df %>% select(loan_purpose) %>% group_by(loan_purpose) %>%mutate(count=n()) %>%
+  ggplot(aes(as.factor(loan_purpose)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$loan_purpose))*1.1))+
+   labs(title = paste("Plot of Loan Purpose"))+
+  xlab("Loan Purpose")+
+  ylab("Counts") 
+
+h7 = df %>%select(occupancy) %>% group_by(occupancy) %>%
+  mutate(count=n()) %>%
+  ggplot(aes(as.factor(occupancy)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+
+  theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$occupancy))*1.1))+
+   labs(title = paste("Plot of Occupany"))+
+  xlab("Occupany")+
+  ylab("Counts") 
+
+h8 = df %>%select(preapproval) %>% group_by(preapproval) %>%mutate(count=n()) %>%
+  ggplot(aes(as.factor(preapproval)))+
+  geom_bar(fill = "cornflowerblue")+
+  geom_text(aes(label = ..count..),stat = "count",vjust = -0.5)+theme_minimal()+
+  scale_y_continuous(limits = c(0,max(table(df$preapproval))*1.1))+
+   labs(title = paste("Plot of Pre-Approval"))+
+  xlab("Pre-Approval")+
+  ylab("Counts") 
+
+plot_grid(h5,h6,ncol = 1,align = "h")
+
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+plot_grid(h7,h8,ncol = 1,align = "h")
+```
+
+
+## MODEL SUMMARY
+
+Based on the analysis of the Home Mortgage Disclosure Act data, a predictive model to classify loan application into two categories: 1 (loan application is accepted) and 2 (loan application is rejected).
+
+The model was created using the lightGBM machine learning algorithm with binary objective and trained with all the data yielded the following results:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(caret)
+load("dev.result.rda")
+confusionMatrix(as.factor(ifelse(dev.result>0.5,1,0)),as.factor(label),
+                positive = "1")
+auc1 = pROC::roc(as.numeric(ifelse(dev.result>0.5,1,0)),as.numeric(label))
+plot(auc1,ylim = c(0,1),print.thres =TRUE,
+     main = paste("AUC:",round(auc1$auc[[1]],3)),col = "blue")
+```
+
+
+Area under the curve: 0.731
+
+Accuracy: 72.8%
+
+Precision: 75.2%
+
+Recall: 68.1%
+
+F1 Score: 74.1%
+
+
+## CONCLUSION
+
+This analysis has shown that the loan application of home mortage applicants can be confidently predicted from its characteristics. In particular, the lender accpetance rate, applicant income, mean applicant income per lender, unique counts of lender, loan amount, and loan purpose have a significant effect on the loan acceptance for each applicant and can help further classify loan application either to accept or reject the application.
